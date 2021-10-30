@@ -9,7 +9,7 @@ import subprocess
 
 USAGE = """-- Robust Video Compress --
 
-USAGE: rvc <directory> <ffmpeg-options> [-- <ffmpeg-output-opts>]"
+USAGE: rvc <directory> [:: <ext1>:<ext2>... ::] <ffmpeg-options> [-- <ffmpeg-output-opts>]"
 
 The script creates a subdirectory inside <directory> that is called
 compressed. All files in <directory> get compressed with ffmpeg.
@@ -37,9 +37,15 @@ FFMPEG_OPTS = ""
 
 #FFMPEG_OPTS += " -hide_banner -loglevel error"
 FFMPEG_SILENT_OPTS = "-v quiet -stats"
-FFMPEG_OPTS += FFMPEG_SILENT_OPTS
+FFMPET_WARNING_OPTS = "-v warning -stats"
+FFMPEG_OPTS += FFMPET_WARNING_OPTS
 
-VIDEO_FILES = "mp4 mov wmv avi flv webm".lower().split()
+VIDEO_FILES = "mp4 m4v mov wmv avi flv webm mkv".lower().split()
+
+IMAGE_FILES = "png gif".lower().split()
+
+COMPRESS_FILES = VIDEO_FILES + IMAGE_FILES
+
 
 def ffmpeg_opts(file):
     # key frame interval, useful for static videos
@@ -65,6 +71,11 @@ def is_video_file(filename):
     name, ext = os.path.splitext(filename)
     assert not ext or ext[0] == "."
     return ext[1:] in VIDEO_FILES
+
+def is_compress_file(filename):
+    name, ext = os.path.splitext(filename)
+    assert not ext or ext[0] == "."
+    return ext[1:] in COMPRESS_FILES
 
 def video_duration(file):
     pipe = subprocess.Popen(f"ffprobe -i {escape_filename(file)}", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -98,7 +109,10 @@ def key_frame_interval(file):
         line = line.decode("utf-8").strip()
         if "K" in line:
             num_keyframes += 1
-            last_frame = float(line[:line.find(",")])
+            try:
+                last_frame = float(line[:line.find(",")])
+            except ValueError:
+                last_frame = 0
     pipe.terminate()
 
     return last_frame/(num_keyframes or 1)
@@ -112,8 +126,20 @@ def compress(input, output, ffmpeg_opts, ffmpeg_opts2):
     else:
         with open(output_incomplete, "w"): pass # create empty output_incomplete file
         print(f"Duration: {video_duration(input)}")
-        cmd(f"ffmpeg {FFMPEG_OPTS} {ffmpeg_opts} -i {escape_filename(input)} -vcodec h264 -acodec aac {ffmpeg_opts2} {escape_filename(output)}")
-        os.remove(output_incomplete)
+        if is_video_file(output):
+            format_opts = "-vcodec h264 -acodec aac"
+        else:
+            format_opts = ""
+
+            
+        try:
+            cmd(f"ffmpeg {FFMPEG_OPTS} {ffmpeg_opts} -i {escape_filename(input)} {format_opts} {ffmpeg_opts2} {escape_filename(output)}")
+        except:
+            import traceback
+            traceback.print_exc()
+            return
+        else:
+            os.remove(output_incomplete)
         
     input_size = os.path.getsize(input)
     output_size = os.path.getsize(output)
@@ -133,7 +159,22 @@ if __name__ == "__main__":
         print(USAGE)
     else:
         dir = sys.argv[1]
+
+        map_ext = {}
+
         opts = sys.argv[2:]
+        if opts:
+            if opts[0] == "::":
+                opts = opts[1:]
+                while opts:
+                    opt, opts = opts[0], opts[1:]
+                    if opt == "::": break
+                    else:
+                        old, new = opt.split(":")
+                        map_ext[old] = new
+
+        print(map_ext)
+        
         try: split_pos = opts.index("--")
         except ValueError: split_pos = len(opts)
         ffmpeg_opts  = " ".join(opts[:split_pos])
@@ -146,7 +187,14 @@ if __name__ == "__main__":
 
         for f in os.listdir(dir):
             if os.path.isfile(os.path.join(dir, f)):
-                if is_video_file(f):
-                    compress(os.path.join(dir, f), os.path.join(subdir, f), ffmpeg_opts, ffmpeg_opts2)
+                if is_compress_file(f):
+                    ifn = os.path.join(dir, f)
+                    ofn = os.path.join(subdir, f)
+                    off, ofx = os.path.splitext(ofn)
+                    ofx = ofx[1:]
+                    if ofx in map_ext:
+                        print("extension replacement {ofx} -> {map_ext[ofx]}")
+                        ofn = off + os.extsep + map_ext[ofx]
+                    compress(ifn, ofn, ffmpeg_opts, ffmpeg_opts2)
                 else:
                     print(f"ignoring {f}, it is not a video file")
