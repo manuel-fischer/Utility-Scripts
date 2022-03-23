@@ -65,7 +65,7 @@ if __name__ == "__main__":
         pdf = J(df)
         assert os.path.isdir(pdf)
         assert not os.listdir(pdf)
-        os.removedirs(pdf)
+        os.rmdir(pdf)
         
 
     os.remove("_br-org.txt")

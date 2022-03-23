@@ -46,6 +46,61 @@ IMAGE_FILES = "png gif".lower().split()
 
 COMPRESS_FILES = VIDEO_FILES + IMAGE_FILES
 
+USE_COMMA = True
+
+def flt2str(flt, prec=3):
+    s = f"{flt:.{prec}f}"
+    if USE_COMMA:
+        s = s.replace(".", ",")
+    return s
+
+def fltdiff2str(a, b):
+    return f"{flt2str((b-a)*100/(a or 1), 2)}%"
+
+def dur2str(dur):
+    return dur
+
+def dur2int(dur):
+    return sum(float(e)*60**i for i, e in enumerate(dur.split(':')))
+
+def durdiff2str(a, b):
+    return fltdiff2str(dur2int(a), dur2int(b))
+
+
+class CompressionLogger:
+    def __init__(self, dir):
+        self.dir = dir
+    
+    def __enter__(self):
+        self.logger = None
+        self.initialized = False
+        return self
+
+    def lazy_init(self):
+        if not self.initialized:
+            self.initialized = True
+            self.logger = open(os.path.join(self.dir, "rvc.csv"), "wt")
+            self.print("ifn;ofn;ifsz;ofsz;fsz%;idur;odur;dur%;ikfrm;okfrm;frm%")
+
+    def print(self, *a, **kv):
+        self.lazy_init()
+        print(*a, **kv, file=self.logger)
+
+    def print_stat(self,
+                   input_fn, output_fn,
+                   input_size, output_size,
+                   input_dur, output_dur,
+                   input_gop, output_gop):
+        self.print(";".join((input_fn, output_fn,
+                             str(input_size), str(output_size), fltdiff2str(input_size, output_size),
+                             dur2str(input_dur), dur2str(output_dur), durdiff2str(input_dur, output_dur),
+                             flt2str(input_gop), flt2str(output_gop), fltdiff2str(input_gop, output_gop)
+                             )))
+
+    def __exit__(self, *a, **kv):
+        if self.logger: self.logger.close()
+
+
 
 def ffmpeg_opts(file):
     # key frame interval, useful for static videos
@@ -117,7 +172,7 @@ def key_frame_interval(file):
 
     return last_frame/(num_keyframes or 1)
 
-def compress(input, output, ffmpeg_opts, ffmpeg_opts2):
+def compress(log, input, output, ffmpeg_opts, ffmpeg_opts2):
     output_incomplete = output+".incomplete"
     if os.path.exists(output) \
        and not os.path.exists(output_incomplete):
@@ -152,6 +207,11 @@ def compress(input, output, ffmpeg_opts, ffmpeg_opts2):
     input_gop = key_frame_interval(input)
     output_gop = key_frame_interval(output)
     print(f"Keyframe ratio (out/in): {output_gop:#6.2f}/{input_gop:<6.2f} = {(output_gop/(input_gop or 1))*100:#6.2f} %")
+
+    log.print_stat(input, output,
+                   input_size, output_size,
+                   input_dur, output_dur,
+                   input_gop, output_gop)
     
 
 if __name__ == "__main__":
@@ -185,16 +245,17 @@ if __name__ == "__main__":
         try: os.mkdir(subdir)
         except FileExistsError: pass
 
-        for f in os.listdir(dir):
-            if os.path.isfile(os.path.join(dir, f)):
-                if is_compress_file(f):
-                    ifn = os.path.join(dir, f)
-                    ofn = os.path.join(subdir, f)
-                    off, ofx = os.path.splitext(ofn)
-                    ofx = ofx[1:]
-                    if ofx in map_ext:
-                        print("extension replacement {ofx} -> {map_ext[ofx]}")
-                        ofn = off + os.extsep + map_ext[ofx]
-                    compress(ifn, ofn, ffmpeg_opts, ffmpeg_opts2)
-                else:
-                    print(f"ignoring {f}, it is not a video file")
+        with CompressionLogger(dir) as log:
+            for f in os.listdir(dir):
+                if os.path.isfile(os.path.join(dir, f)):
+                    if is_compress_file(f):
+                        ifn = os.path.join(dir, f)
+                        ofn = os.path.join(subdir, f)
+                        off, ofx = os.path.splitext(ofn)
+                        ofx = ofx[1:]
+                        if ofx in map_ext:
+                            print("extension replacement {ofx} -> {map_ext[ofx]}")
+                            ofn = off + os.extsep + map_ext[ofx]
+                        compress(log, ifn, ofn, ffmpeg_opts, ffmpeg_opts2)
+                    else:
+                        print(f"ignoring {f}, it is not a video file")

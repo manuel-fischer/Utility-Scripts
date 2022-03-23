@@ -1,4 +1,7 @@
 import win32com.client
+# pip install pywin32
+# OR
+# pip install -U pypiwin32
 import time
 
 shell = win32com.client.Dispatch("WScript.Shell")
